@@ -98,7 +98,7 @@ def flask_server():
     # SETTING UP WIFI SETUP ROUTE
     @app.route('/wifisetup', methods=['GET', 'POST'])
     def wifiSetup():
-        # ERROR FLAG IS SET SO THAT WPA SUPPLIMENT FILE ISN'T WRITTEN DURING ERROR
+        # ERROR FLAG IS SET SO THAT WPA SUPPLICANT FILE ISN'T WRITTEN DURING ERROR
         error_flag = False
 
         # PASSWORD FLAG IS SET TO TRUE IF PASSWORD IS EMTPY (OPEN NETWORK)
@@ -138,22 +138,24 @@ def flask_server():
 
         # IF NO ERROR OPEN THE WPA SUPPLICANT FILE AND ADD THE WIFI NETWORK
         if error_flag is False:
-            # CHANGE DIRECTORY TO /etc/wpa_suppliments/ WHERE THE SUPPLIMENT FILE IS PLACED
-            # os.chdir('/etc/wpa_suppliments/')
+            # CHANGE DIRECTORY TO /etc/wpa_supplicant WHERE THE SUPPLICANT FILE IS PLACED
+            os.chdir('/etc/wpa_supplicant')
             wpa_file = open("wpa_supplicant.conf", 'a')
+
+            print(wpa_file)
 
             # IF PASSWORD IS NONE key_mgmt IS SET TO NONE
             if password_flag is True:
                 new_network = """
 network={
-	ssid='%s'
-	psk='%s'
+	ssid=\"%s\"
+	psk=\"%s\"
 }
 				""" % (ssid, key)
             else:
                 new_network = """
 network={
-	ssid='%s'
+	ssid=\"%s\"
 	key_mgmt=none
 }
 				""" % (ssid)
@@ -191,8 +193,8 @@ ap_scan=1
 update_config=1
 
 network={
-        ssid="PetFeed"
-        key_mgmt=NONE
+        ssid=\"PetFeed\"
+        psk=\"petfeed123\"
         priority=1
 }
 
@@ -262,27 +264,30 @@ def pusher_server():
 
         # IF THE KEY GET HAS STATUS RETURN THE STATUS OF DEVICE
         if 'get' in data.keys():
+            user = None
             with connection.cursor() as cursor:
-                query = "SELECT DISTINCT id, email FROM users"
+                query = "SELECT DISTINCT id, email FROM users WHERE email=%s"
                 try:
-                    cursor.execute(query)
+                    cursor.execute(query, data['user'])
                     user = cursor.fetchone()
+
 
                 except:
                     user = None
 
-            if data['get'] == 'status':
+            if user is not None:
 
-                pusherEvent.trigger(channel, event, {
-                    'connection': 'global',
-                    'user': user['email'],
-                    'message': 'Device is running perfectly fine.',
-                    'status': 'online'
-                })
+                if data['get'] == 'status':
 
-            elif data['get'] == 'schedule':
+                    pusherEvent.trigger(channel, event, {
+                        'connection': 'global',
+                        'user': user['email'],
+                        'message': 'Device is running perfectly fine.',
+                        'status': 'online'
+                    })
 
-                if data['user'] == user['email']:
+                elif data['get'] == 'schedule':
+
                     with connection.cursor() as cursor:
                         try:
                             query = "SELECT * FROM schedules WHERE user_id=%s"
@@ -317,19 +322,19 @@ def pusher_server():
                                 'status': 'error',
                                 'message': 'Could not find schedules for specified user. (Schedules not set yet)'
                             })
+
+
                 else:
                     pusherEvent.trigger(channel, event, {
                         'connection': 'global',
-                        'user': user['email'],
                         'status': 'error',
-                        'message': 'Could not find schedules for specified user. (Not bind to the device?)'
+                        'message': 'invalid get'
                     })
 
             else:
                 pusherEvent.trigger(channel, event, {
-                    'connection': 'global',
                     'status': 'error',
-                    'message': 'invalid get'
+                    'message': 'No device bound to the specified user.'
                 })
 
         # IF THE KEY FEED HAS THE VALUE FEED, FEED THE PET AND RETURN THE STATUS

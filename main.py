@@ -183,8 +183,8 @@ network={
 
     @app.route('/delete/wifi')
     def deleteWifi():
-        # os.chdir('/etc/wpa_suppliments/')
-        os.chdir('/var/petfeed/')
+         os.chdir('/etc/wpa_supplicant/')
+        #os.chdir('/var/petfeed/')
         wpa_file = open("wpa_supplicant.conf", 'w')
 
         default_wpa = """

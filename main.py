@@ -24,8 +24,10 @@ GPIO.setup(11, GPIO.OUT)
 pwm = GPIO.PWM(11, 50)
 
 # SETTING UP VARIABLES TO USE AS SERVO POSITIONS
-servo_default_position = 11
-servo_feeding_position = 2
+# 2, 11 GIVES 180 DEGREE
+# 2, 6 GIVES 90 DEGREE
+servo_default_position = 2
+servo_feeding_position = 6
 
 # SET INITIAL POSITION OF THE SERVO TO DEFAULT
 pwm.start(5)
@@ -34,7 +36,7 @@ pwm.ChangeDutyCycle(servo_default_position)
 def device_feed():
     # MOVE THE SERVO TO FEEDING POSITION
     pwm.ChangeDutyCycle(servo_feeding_position)
-    time.sleep(5)
+    time.sleep(0.5)
 
     # MOVE THE SERVO TO DEFAULT POSITION
     pwm.ChangeDutyCycle(servo_default_position)
@@ -100,9 +102,6 @@ def flask_server():
     def wifiSetup():
         # ERROR FLAG IS SET SO THAT WPA SUPPLICANT FILE ISN'T WRITTEN DURING ERROR
         error_flag = False
-
-        # PASSWORD FLAG IS SET TO TRUE IF PASSWORD IS EMTPY (OPEN NETWORK)
-        password_flag = False
 
         ssid = ''
         key = ''
@@ -183,8 +182,8 @@ network={
 
     @app.route('/delete/wifi')
     def deleteWifi():
-         os.chdir('/etc/wpa_supplicant/')
-        #os.chdir('/var/petfeed/')
+        os.chdir('/etc/wpa_supplicant/')
+        # os.chdir('/var/petfeed/')
         wpa_file = open("wpa_supplicant.conf", 'w')
 
         default_wpa = """
@@ -211,20 +210,35 @@ network={
 
     @app.route('/set/user', methods=['GET', 'POST'])
     def setupUser():
-        email = ''
 
         if request.method == 'GET':
             email = request.args.get('email')
+            if email is None:
+                return {
+                    'status': 'error',
+                    'message': 'email field is required'
+                }
         elif request.method == 'post':
-            email = request.form['email']
+            email = (request.form['email'])
+            if email is None:
+                return {
+                    'status': 'error',
+                    'message': 'email field is required'
+                }
         else:
             response = request_method_error
             return jsonify(response)
 
-        with connection.cursors() as cursor:
-            query = "INSERT INTO users(email) VALUES('%s')"
+        with connection.cursor() as cursor:
 
             try:
+                query = "DROP FROM users"
+                cursor.execute(query)
+
+                query = "DROP FROM schedules"
+                cursor.execute(query)
+
+                query = "INSERT INTO users(email) VALUES('%s')"
                 cursor.execute(query, email)
                 connection.commit()
 
@@ -247,6 +261,14 @@ network={
 
                 return jsonify(response)
 
+    @app.route('/restart')
+    def restart():
+        os.system("sudo reboot")
+
+    @app.route('/shutdown')
+    def shutdown():
+        os.system("sudo poweroff")
+
     app.run('0.0.0.0', 80)
 ##########################################################
 
@@ -264,7 +286,6 @@ def pusher_server():
 
         # IF THE KEY GET HAS STATUS RETURN THE STATUS OF DEVICE
         if 'get' in data.keys():
-            user = None
             with connection.cursor() as cursor:
                 query = "SELECT DISTINCT id, email FROM users WHERE email=%s"
                 try:
@@ -323,6 +344,23 @@ def pusher_server():
                                 'message': 'Could not find schedules for specified user. (Schedules not set yet)'
                             })
 
+                elif data['get'] == 'restart':
+                    pusherEvent.trigger(channel, event, {
+                        'connection': 'global',
+                        'user': user['email'],
+                        'status': 'restarting',
+                        'message': 'Restarting your device.'
+                    })
+                    os.system('sudo restart')
+
+                elif data['get'] == 'shutdown':
+                    pusherEvent.trigger(channel, event, {
+                        'connection': 'global',
+                        'user': user['email'],
+                        'status': 'shuttingdown',
+                        'message': 'Shutting down your device.'
+                    })
+                    os.system('sudo shutdown')
 
                 else:
                     pusherEvent.trigger(channel, event, {
@@ -385,8 +423,8 @@ def pusher_server():
                     'message': 'The user field isn\'t set'
                 })
 
-        elif 'schedule' in data.keys():
-            if data['schedule'] == 'set':
+        elif 'set' in data.keys():
+            if data['set'] == 'schedule':
                 try:
                     user = data['user']
 
@@ -404,21 +442,28 @@ def pusher_server():
                             })
 
                         else:
+                            if len(data['data']) > 0:
+                                for schedule in data['data']:
+                                    day = schedule['day']
+                                    feed_time = schedule['time']
+                                    feed_time = datetime.strptime(feed_time, "%H:%M")
 
-                            for schedule in data['data']:
-                                day = schedule['day']
-                                feed_time = schedule['time']
-                                feed_time = datetime.strptime(feed_time, "%H:%M")
+                                    sql = "INSERT INTO schedules (day, time, user_id) VALUES (%s, %s, %s)"
+                                    cursor.execute(sql, (day, feed_time, user_result['id']))
+                                connection.commit()
 
-                                sql = "INSERT INTO schedules (day, time, user_id) VALUES (%s, %s, %s)"
-                                cursor.execute(sql, (day, feed_time, user_result['id']))
-                            connection.commit()
+                                pusherEvent.trigger(channel, event, {
+                                    'connection': 'global',
+                                    'status': 'success',
+                                    'message': 'Your schedule was added successfully.'
+                                })
+                            else:
+                                pusherEvent.trigger(channel, event, {
+                                    'connection': 'global',
+                                    'status': 'error',
+                                    'message': 'Empty data recieved.'
+                                })
 
-                            pusherEvent.trigger(channel, event, {
-                                'connection': 'global',
-                                'status': 'success',
-                                'message': 'Your schedule was added successfully.'
-                            })
                 except:
                     with connection.cursor as cursor:
                         cursor.rollback()
@@ -506,36 +551,34 @@ def scheduled_task():
                                   secret="7bbae18dfe3989d432a6", cluster="mt1")
         try:
             today_day = datetime.now().strftime("%A")
-            today_time = datetime.now().strftime("%H:%M")
+            today_time = datetime.now().strftime("%H:%M:%S")
 
-            query = "SELECT * FROM schedules WHERE day=%s AND fed=False"
-            cursor.execute(query, today_day)
+            query = "SELECT * FROM schedules WHERE day=%s AND time=%s"
+            cursor.execute(query, today_day, today_time)
 
             schedules = cursor.fetchall()
 
             if len(schedules) > 0:
                 for schedule in schedules:
-                    scheduled_time = schedule['time'].strftime('%H:%M')
-                    feeding_date = datetime.now()
+                    scheduled_time = schedule['time'].strftime('%H:%M:%S')
 
-                    if scheduled_time > today_time:
-                        # CALL THE DEVICE FEED FUNCTION THAT CONTROLS THE PI SERVO
-                        device_feed()
-                        user_id = schedule['user_id']
+                    # CALL THE DEVICE FEED FUNCTION THAT CONTROLS THE PI SERVO
+                    device_feed()
+                    user_id = schedule['user_id']
 
-                        query = "SELECT DISTINCT email, id FROM users WHERE id = '%s'"
-                        cursor.execute(query, user_id)
+                    query = "SELECT DISTINCT email, id FROM users WHERE id = '%s'"
+                    cursor.execute(query, user_id)
 
-                        user = cursor.fetchone()
+                    user = cursor.fetchone()
 
-                        pusherEvent.trigger(channel, event, {
+                    pusherEvent.trigger(channel, event, {
+                        'user': user['email'],
+                        'status': 'success',
+                        'data': {
+                            'feeding_date': scheduled_time,
                             'user': user['email'],
-                            'status': 'success',
-                            'data': {
-                                'feeding_date': feeding_date,
-                                'user': user['email']
-                            }
-                        })
+                        }
+                    })
 
         except:
             pusherEvent.trigger(channel, event, {

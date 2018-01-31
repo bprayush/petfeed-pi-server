@@ -434,7 +434,7 @@ def pusher_server():
                         cursor.execute(query, user)
                         user_result = cursor.fetchone()
 
-                        if len(user_result) <= 0:
+                        if user_result is None:
                             pusherEvent.trigger(channel, event, {
                                 'connection': 'global',
                                 'status': 'error',
@@ -442,7 +442,7 @@ def pusher_server():
                             })
 
                         else:
-                            if len(data['data']) > 0:
+                            if data['data'] is not None:
                                 for schedule in data['data']:
                                     day = schedule['day']
                                     feed_time = schedule['time']
@@ -546,27 +546,29 @@ def scheduled_task():
     channel = "petfeed"
     event = "Need to add one later"
 
-    with connection.cursor() as cursor:
-        pusherEvent = PusherEvent(app_id="440480", key="0053280ec440a78036bc",
-                                  secret="7bbae18dfe3989d432a6", cluster="mt1")
-        try:
+    pusherEvent = PusherEvent(app_id="440480", key="0053280ec440a78036bc",
+                              secret="7bbae18dfe3989d432a6", cluster="mt1")
+    try:
+        #print("Inside scheduled task")
+        while 1:
             today_day = datetime.now().strftime("%A")
             today_time = datetime.now().strftime("%H:%M:%S")
+            print(today_day + ' ' + today_time)
 
-            query = "SELECT * FROM schedules WHERE day=%s AND time=%s"
-            cursor.execute(query, today_day, today_time)
+            with connection.cursor() as cursor:
+                query = "SELECT * FROM schedules WHERE day=%s AND time=%s"
+                cursor.execute(query, (today_day, today_time))
 
-            schedules = cursor.fetchall()
-
-            if len(schedules) > 0:
-                for schedule in schedules:
-                    scheduled_time = schedule['time'].strftime('%H:%M:%S')
-
+                schedule = cursor.fetchone()
+                if schedule is not None:
+                    scheduled_time = today_time
+                    #print("inside found schedule")
+                    #break
                     # CALL THE DEVICE FEED FUNCTION THAT CONTROLS THE PI SERVO
                     device_feed()
                     user_id = schedule['user_id']
 
-                    query = "SELECT DISTINCT email, id FROM users WHERE id = '%s'"
+                    query = "SELECT DISTINCT email, id FROM users WHERE id = %s"
                     cursor.execute(query, user_id)
 
                     user = cursor.fetchone()
@@ -579,13 +581,14 @@ def scheduled_task():
                             'user': user['email'],
                         }
                     })
+            time.sleep(1);
 
-        except:
-            pusherEvent.trigger(channel, event, {
-                'connection': 'global',
-                'status': 'error',
-                'message': 'Internal error occurred while adding schedule'
-            })
+    except:
+        pusherEvent.trigger(channel, event, {
+            'connection': 'global',
+            'status': 'error',
+            'message': 'Internal error occurred while reading schedule'
+        })
 
 
 ##########################################################
@@ -598,6 +601,9 @@ if __name__ == '__main__':
     flask_thread.start()
     pusher_thread = Thread(target=pusher_server)
     pusher_thread.start()
+    scheduled_thread = Thread(target=scheduled_task)
+    scheduled_thread.start()
+    scheduled_thread.join()
     pusher_thread.join()
     flask_thread.join()
 
